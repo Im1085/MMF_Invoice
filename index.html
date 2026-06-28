@@ -664,60 +664,54 @@ function renderDeliveries(){
   var container=document.getElementById('delivery-cards');
   if(!filtered.length){container.innerHTML='<div class="empty">No deliveries for this day</div>';return;}
 
-  // Sort by delivery date
-  filtered=filtered.slice().sort(function(a,b){
-    var da=parseDeliveryDate(a.delivery_date),db=parseDeliveryDate(b.delivery_date);
-    if(!da&&!db)return 0;if(!da)return 1;if(!db)return -1;return da-db;
+  // Sort ALL filtered stops by geographic route order first
+  // Then group by date for display — cards show in correct route sequence
+  filtered = filtered.slice().sort(function(a,b){
+    // Primary: delivery date
+    var da=parseDeliveryDate(a.delivery_date), db=parseDeliveryDate(b.delivery_date);
+    if(da&&db&&da.getTime()!==db.getTime()) return da-db;
+    // Secondary within same date: geographic order (zip rank then street number)
+    var za=extractZip(a.address), zb=extractZip(b.address);
+    var ra=zipRank(za), rb=zipRank(zb);
+    if(ra!==rb) return ra-rb;
+    return extractStreetNum(a.address)-extractStreetNum(b.address);
   });
 
   var CHUNK=8;
-  var numLoads=Math.ceil(filtered.length/CHUNK);
-  var ORIGIN='2323+E+Main+St+Ventura+CA+93003';
+  var STORE='2323 E Main Street, Ventura, CA 93003';
 
-  // Build route buttons — only when a specific day is selected (not "All")
-  // Group by date so same weekday different weeks get separate routes
+  // Build route buttons grouped by date
   var toolbar=document.getElementById('delivery-toolbar');
   if(toolbar){
     var ob=toolbar.querySelector('.route-btns');if(ob)ob.remove();
     if(currentDay!=='All'){
-      // Group filtered by delivery_date
+      // Group by date
       var dateGroups={};var dateOrder=[];
       filtered.forEach(function(d){
         var dk=d.delivery_date||'Unknown';
         if(!dateGroups[dk]){dateGroups[dk]=[];dateOrder.push(dk);}
         dateGroups[dk].push(d);
       });
-      var wrap=document.createElement('div');wrap.className='route-btns';wrap.style.cssText='display:flex;gap:6px;flex-wrap:wrap;';
+      var wrap=document.createElement('div');
+      wrap.className='route-btns';
+      wrap.style.cssText='display:flex;gap:6px;flex-wrap:wrap;';
       dateOrder.forEach(function(dk){
         var dayStops=dateGroups[dk];
-        var numDayLoads=Math.ceil(dayStops.length/CHUNK);
-        for(var li=0;li<numDayLoads;li++){
+        // Chunk into loads of 8
+        for(var li=0;li<Math.ceil(dayStops.length/CHUNK);li++){
           var load=dayStops.slice(li*CHUNK,(li+1)*CHUNK);
-          // Sort stops using nearest-neighbor by zip code (clusters nearby addresses)
-          var sorted=nearestNeighborSort(load);
-          var STORE='2323 E Main Street, Ventura, CA 93003';
-          var addrs=sorted.map(function(d){return(d.address||d.customer_name||'Ventura CA').trim();});
-          var url;
-          if(addrs.length===0){
-            url='https://www.google.com/maps/search/'+encodeURIComponent(STORE);
-          } else if(addrs.length===1){
-            // Single stop — simple A to B
-            url='https://www.google.com/maps/dir/'+encodeURIComponent(STORE)+'/'+encodeURIComponent(addrs[0]);
-          } else {
-            // Multiple stops — use ?api=1 format WITHOUT optimize:true to lock our order
-            var dest=addrs[addrs.length-1];
-            var mid=addrs.slice(0,-1);
-            url='https://www.google.com/maps/dir/?api=1'
-              +'&origin='+encodeURIComponent(STORE)
-              +'&destination='+encodeURIComponent(dest)
-              +(mid.length?'&waypoints='+mid.map(function(a){return encodeURIComponent(a);}).join('%7C'):'')
-              +'&travelmode=driving';
-          }
+          // Build simple /dir/ URL — stops already in correct order
+          var allAddrs=[STORE].concat(load.map(function(d){
+            return (d.address||d.customer_name||'Ventura CA').trim();
+          }));
+          var url='https://www.google.com/maps/dir/'+allAddrs.map(function(a){
+            return encodeURIComponent(a);
+          }).join('/');
           var a=document.createElement('a');
-          a.href=url;a.target='_blank';a.className='btn btn-blue btn-sm no-print';
+          a.href=url; a.target='_blank';
+          a.className='btn btn-blue btn-sm no-print';
           a.style.textDecoration='none';
-          var label='Route: '+dk+(numDayLoads>1?' (Load '+(li+1)+')':'');
-          a.textContent=label;
+          a.textContent='Open in Maps: '+dk+(Math.ceil(dayStops.length/CHUNK)>1?' (Load '+(li+1)+')':'');
           wrap.appendChild(a);
         }
       });
@@ -725,45 +719,49 @@ function renderDeliveries(){
     }
   }
 
-  // Render cards with date group headers
+  // Render cards in sorted order with date group headers
   var html='';
-  if(numLoads>1){html+='<div style="background:var(--ambb);border:1px solid var(--amb);border-radius:var(--r);padding:10px 14px;font-size:13px;color:var(--ambt);margin-bottom:1rem;"><strong>'+filtered.length+' deliveries</strong> — split into '+numLoads+' loads of up to 8.</div>';}
   var lastDate='';
-  filtered.forEach(function(d,idx){
-    var loadNum=Math.floor(idx/CHUNK);
-    if(idx%CHUNK===0&&numLoads>1)html+='<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--txm);margin:1rem 0 .5rem;">── Load '+(loadNum+1)+'</div>';
-    // Date group header — separates same weekday different weeks
-    var dateKey=sf(d.delivery_date);
+  var stopNum=0;
+  filtered.forEach(function(d){
+    var dateKey=sf(d.delivery_date)+(d.delivery_window?' — '+d.delivery_window:'');
     if(dateKey!==lastDate){
-      html+='<div class="date-header">'+dateKey+(d.delivery_window?' — '+d.delivery_window:'')+'</div>';
+      if(lastDate!=='') html+='<div style="height:8px"></div>';
+      html+='<div class="date-header">'+dateKey+'</div>';
       lastDate=dateKey;
+      stopNum=0;
     }
+    stopNum++;
     var inv3=d.invoice_number?d.invoice_number.slice(-3):'—';
     var items=(d.line_items||[]).map(function(it){
       return '<div style="padding:3px 0;font-size:13px;border-bottom:1px solid var(--sur2);">'+it.name+(it.size?' — <span style="font-weight:600;color:var(--acc)">'+it.size+'</span>':'')+'</div>';
     }).join('');
     var codVal=d.cod||'no';
     var codBadge=codVal!=='no'?'<span class="tag-cod" style="margin-left:6px">CoD: '+codVal+(d.balance_due?' — '+d.balance_due:'')+'</span>':'';
-    var stopNum='<div style="width:26px;height:26px;border-radius:50%;background:#1a1917;color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;">'+(idx+1)+'</div>';
-    html+='<div class="card print-section" style="margin-bottom:.75rem">'
+    var zip=extractZip(d.address);
+    html+='<div class="card print-section" style="margin-bottom:.5rem;">'
       +'<div style="display:flex;justify-content:space-between;align-items:flex-start;">'
-        +'<div style="display:flex;gap:10px;align-items:center;">'+stopNum
+        +'<div style="display:flex;gap:10px;align-items:center;">'
+          +'<div style="width:26px;height:26px;border-radius:50%;background:#1a1917;color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;">'+stopNum+'</div>'
           +'<div class="av">'+ini(d.customer_name)+'</div>'
-          +'<div><div style="font-size:14px;font-weight:600;">'+sf(d.customer_name)+codBadge+'</div>'
-          +'<div style="font-size:12px;color:var(--txm);">Invoice …'+inv3+' &nbsp;·&nbsp; '+sf(d.delivery_date)+(d.delivery_window?' ('+d.delivery_window+')':'')+'</div></div>'
+          +'<div>'
+            +'<div style="font-size:14px;font-weight:600;">'+sf(d.customer_name)+codBadge+'</div>'
+            +'<div style="font-size:12px;color:var(--txm);">Invoice …'+inv3+(zip&&zip!=='99999'?' &nbsp;·&nbsp; '+zip:'')+'</div>'
+          +'</div>'
         +'</div>'
-        +'<button class="btn btn-xs btn-red no-print" onclick="remDel(\''+d._id+'\')">✕</button>'
+        +'<button class="btn btn-xs btn-red no-print" onclick="remDel(this)" data-id="'+d._id+'">✕</button>'
       +'</div>'
-      +'<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--bor);display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px;">'
-        +'<div><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--txl);margin-bottom:3px;">Address</div>'+sf(d.address)+'</div>'
-        +'<div><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--txl);margin-bottom:3px;">Phone</div>'+sf(d.phone)+'</div>'
-        +'<div style="grid-column:1/-1"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--txl);margin-bottom:4px;">Items</div>'+items+'</div>'
-      +'</div></div>';
+      +'<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--bor);display:grid;grid-template-columns:1fr 1fr;gap:8px;">'
+        +'<div><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--txl);margin-bottom:3px;">Address</div><div style="font-size:13px;">'+sf(d.address)+'</div></div>'
+        +'<div><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--txl);margin-bottom:3px;">Phone</div><div style="font-size:13px;">'+sf(d.phone)+'</div></div>'
+        +'<div style="grid-column:1/-1"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--txl);margin-bottom:3px;">Items</div>'+items+'</div>'
+      +'</div>'
+      +'</div>';
   });
   container.innerHTML=html;
 }
 
-async function remDel(id){await fbDel('deliveries',id);await fetchAll();};
+async function remDel(el){var id=typeof el==='string'?el:el.getAttribute('data-id');await fbDel('deliveries',id);await fetchAll();};
 
 async function clearDeliveryDay(){
   if(!confirm('Clear all deliveries for '+currentDay+'?'))return;
