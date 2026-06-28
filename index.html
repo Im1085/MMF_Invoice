@@ -655,24 +655,39 @@ function renderDeliveries(){
   var numLoads=Math.ceil(filtered.length/CHUNK);
   var ORIGIN='2323+E+Main+St+Ventura+CA+93003';
 
-  // Build route buttons with URLs ready
+  // Build route buttons — only when a specific day is selected (not "All")
+  // Group by date so same weekday different weeks get separate routes
   var toolbar=document.getElementById('delivery-toolbar');
   if(toolbar){
     var ob=toolbar.querySelector('.route-btns');if(ob)ob.remove();
-    var wrap=document.createElement('div');wrap.className='route-btns';wrap.style.cssText='display:flex;gap:6px;flex-wrap:wrap;';
-    for(var li=0;li<numLoads;li++){
-      var load=filtered.slice(li*CHUNK,(li+1)*CHUNK);
-      var parts=[ORIGIN];
-      load.forEach(function(d){parts.push(encodeURIComponent((d.address||d.customer_name||'Ventura CA').trim()));});
-      parts.push(ORIGIN);
-      var url='https://www.google.com/maps/dir/'+parts.join('/');
-      var a=document.createElement('a');
-      a.href=url;a.target='_blank';a.className='btn btn-blue btn-sm no-print';
-      a.style.textDecoration='none';
-      a.textContent=numLoads>1?'Open Route (Load '+(li+1)+')':'Open Route';
-      wrap.appendChild(a);
+    if(currentDay!=='All'){
+      // Group filtered by delivery_date
+      var dateGroups={};var dateOrder=[];
+      filtered.forEach(function(d){
+        var dk=d.delivery_date||'Unknown';
+        if(!dateGroups[dk]){dateGroups[dk]=[];dateOrder.push(dk);}
+        dateGroups[dk].push(d);
+      });
+      var wrap=document.createElement('div');wrap.className='route-btns';wrap.style.cssText='display:flex;gap:6px;flex-wrap:wrap;';
+      dateOrder.forEach(function(dk){
+        var dayStops=dateGroups[dk];
+        var numDayLoads=Math.ceil(dayStops.length/CHUNK);
+        for(var li=0;li<numDayLoads;li++){
+          var load=dayStops.slice(li*CHUNK,(li+1)*CHUNK);
+          var parts=[ORIGIN];
+          load.forEach(function(d){parts.push(encodeURIComponent((d.address||d.customer_name||'Ventura CA').trim()));});
+          parts.push(ORIGIN);
+          var url='https://www.google.com/maps/dir/'+parts.join('/');
+          var a=document.createElement('a');
+          a.href=url;a.target='_blank';a.className='btn btn-blue btn-sm no-print';
+          a.style.textDecoration='none';
+          var label='Route: '+dk+(numDayLoads>1?' (Load '+(li+1)+')':'');
+          a.textContent=label;
+          wrap.appendChild(a);
+        }
+      });
+      toolbar.insertBefore(wrap,toolbar.firstChild);
     }
-    toolbar.insertBefore(wrap,toolbar.firstChild);
   }
 
   // Render cards with date group headers
@@ -747,7 +762,18 @@ function renderTotals(){
   var rows=DB.totals;
   var gTotal=0,gSub=0,gTax=0,daySales={};
   DAYS.forEach(function(d){daySales[d]=0;});
-  rows.forEach(function(r){gTotal+=parseDollar(r.total);gSub+=parseDollar(r.subtotal);gTax+=parseDollar(r.tax);if(r.delivery_window&&daySales[r.delivery_window]!==undefined)daySales[r.delivery_window]+=parseDollar(r.total);});
+  rows.forEach(function(r){
+    gTotal+=parseDollar(r.total);gSub+=parseDollar(r.subtotal);gTax+=parseDollar(r.tax);
+    // Use day of week from invoice_date (when it was sold), not delivery day
+    if(r.invoice_date){
+      var p=r.invoice_date.split('/');
+      if(p.length>=3){
+        var saleDate=new Date(parseInt(p[2]),parseInt(p[0])-1,parseInt(p[1]));
+        var dayName=DAYS[saleDate.getDay()===0?6:saleDate.getDay()-1]; // Mon=0 index
+        if(dayName&&daySales[dayName]!==undefined)daySales[dayName]+=parseDollar(r.total);
+      }
+    }
+  });
   document.getElementById('st-count').textContent=rows.length;
   document.getElementById('st-sub').textContent=fmt(gSub);
   document.getElementById('st-tax').textContent=fmt(gTax);
