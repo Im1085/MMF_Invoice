@@ -698,7 +698,7 @@ function renderDeliveries(){
           var STORE='2323 E Main Street, Ventura, CA 93003';
           var parts=[STORE];
           sorted.forEach(function(d){parts.push((d.address||d.customer_name||'Ventura CA').trim());});
-          parts.push(STORE);
+          // No return to store — route ends at last delivery stop
           var url='https://www.google.com/maps/dir/'+parts.map(function(p){return encodeURIComponent(p);}).join('/');
           var a=document.createElement('a');
           a.href=url;a.target='_blank';a.className='btn btn-blue btn-sm no-print';
