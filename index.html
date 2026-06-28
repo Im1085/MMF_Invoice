@@ -696,10 +696,23 @@ function renderDeliveries(){
           // Sort stops using nearest-neighbor by zip code (clusters nearby addresses)
           var sorted=nearestNeighborSort(load);
           var STORE='2323 E Main Street, Ventura, CA 93003';
-          var parts=[STORE];
-          sorted.forEach(function(d){parts.push((d.address||d.customer_name||'Ventura CA').trim());});
-          // No return to store — route ends at last delivery stop
-          var url='https://www.google.com/maps/dir/'+parts.map(function(p){return encodeURIComponent(p);}).join('/');
+          var addrs=sorted.map(function(d){return(d.address||d.customer_name||'Ventura CA').trim();});
+          var url;
+          if(addrs.length===0){
+            url='https://www.google.com/maps/search/'+encodeURIComponent(STORE);
+          } else if(addrs.length===1){
+            // Single stop — simple A to B
+            url='https://www.google.com/maps/dir/'+encodeURIComponent(STORE)+'/'+encodeURIComponent(addrs[0]);
+          } else {
+            // Multiple stops — use ?api=1 format WITHOUT optimize:true to lock our order
+            var dest=addrs[addrs.length-1];
+            var mid=addrs.slice(0,-1);
+            url='https://www.google.com/maps/dir/?api=1'
+              +'&origin='+encodeURIComponent(STORE)
+              +'&destination='+encodeURIComponent(dest)
+              +(mid.length?'&waypoints='+mid.map(function(a){return encodeURIComponent(a);}).join('%7C'):'')
+              +'&travelmode=driving';
+          }
           var a=document.createElement('a');
           a.href=url;a.target='_blank';a.className='btn btn-blue btn-sm no-print';
           a.style.textDecoration='none';
