@@ -328,7 +328,7 @@ firebase.initializeApp(firebaseConfig);
 var db = firebase.firestore();
 
 // ── CONSTANTS ────────────────────────────────────────────────────────────────
-const DIST = ['Stock','Spring Air','BIA','Serta','Spinal Care','Beautyrest','Simmons','Purple','Tempur-Pedic','V-Floor','VTA Floor','Misc'];
+const DIST = ['Stock','Spring Air','BIA','Serta','Spinal Care','Beautyrest','Simmons','Springpedic','V-Floor','VTA Floor','Misc'];
 const DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 const COLS = ['toorder','ordered','deliveries','totals','monthly'];
 
@@ -479,7 +479,7 @@ window.go = function() {
   var delivery_date=null, delivery_window=null;
   var cm=flat.match(/Comments[:\s]+(.*?)(?:Subtotal|$)/i);
   if(cm){
-    var dm=cm[1].match(/\b(\d{1,2}\/\d{1,2})\b/);
+    var dm=cm[1].match(/\b(\d{1,2}[\/\-]\d{1,2})\b/);if(dm)dm[1]=dm[1].replace(/-/g,'/');
     var dw=cm[1].match(/\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/i);
     if(dm) delivery_date=dm[1]+'/'+new Date().getFullYear();
     if(dw) delivery_window=dw[1];
@@ -489,7 +489,7 @@ window.go = function() {
     for(var i=0;i<lines.length;i++){if(/^Comments:?$/i.test(lines[i])){ci=i;break;}}
     if(ci>=0){
       var cb=lines.slice(ci+1,ci+15).join(' ');
-      var dm2=cb.match(/\b(\d{1,2}\/\d{1,2})\b/);
+      var dm2=cb.match(/\b(\d{1,2}[\/\-]\d{1,2})\b/);if(dm2)dm2[1]=dm2[1].replace(/-/g,'/');
       var dw2=cb.match(/\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/i);
       if(dm2&&!delivery_date) delivery_date=dm2[1]+'/'+new Date().getFullYear();
       if(dw2&&!delivery_window) delivery_window=dw2[1];
@@ -504,7 +504,7 @@ window.go = function() {
 
   var SKIP=/^(State\s+Fee|Processing\s+Fee|CA\s+recycling|2026\s+CA|Freight|Delivery\s+Fee|Quantity|Total\s+Quantity|Subtotal|Sales\s+Tax|Invoice|Balance|Credit|Payment|Your\s+payment|Bill\s+To|Ship\s+To|Comments|Item\s+Name|PrintDownload|My\s+American|Office\s+Phone|travisescalante|Created|Thanks|Invoice\s+Number|Invoice\s+Date|Payment\s+Terms)/i;
   var SZ=/\b(Twin\s*XL|Twin|Full|Queen|Cal\s*King|Split\s*King|Split\s*CK|Eastern\s*King|King|CK|EK)\b/i;
-  var KW=/\b(mattress|box\s*spring|box|foundation|frame|pillow|protector|plush|firm|soft|medium|hybrid|latex|foam|adjustable|platform|base|headboard|footboard|rails?|slats?|RB|RM|RS|Matt)\b/i;
+  var KW=/\b(mattress|box\s*spring|box|foundation|frame|pillow|protector|plush|firm|soft|medium|hybrid|latex|foam|adjustable|platform|base|headboard|footboard|rails?|slats?|RB|RM|RS|Matt|Windsor|Maxim|Casper|Eclipse|Daisy|Siesta|Sealy|Serta|Simmons|Beautyrest|Stearns|Tempur|Purple|Springpedic|closeout|bring|kit)\b/i;
   var items=[], seen={};
 
   var itemStart=-1;
@@ -526,7 +526,7 @@ window.go = function() {
         if(pm2&&parseFloat(pm2[1])>1.5){price='$'+pm2[1];break;}
       }
       var size=sz?sz[0].replace(/\s+/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}):null;
-      var name=l.trim();
+      var name=l.trim().replace(/\s+\d{3,}[\.,]\d{2}\s*$/,'').trim(); // strip embedded MSRP
       if(!seen[name.toLowerCase()]){seen[name.toLowerCase()]=1;items.push({name:name,size:size,price:price,status:'no',distributor:'Stock'});}
       i++;
     }
@@ -549,10 +549,13 @@ window.go = function() {
 
   // Subtotal = product items only (no fees)
   var calcSub = items.reduce(function(s,it){return s+parseDollar(it.price);},0);
-  var subtotal = calcSub>0 ? fmt(calcSub) : null;
-  if(calcSub>0&&!tax){
+  // If item prices are null (price on separate line), fall back to invoice Subtotal field
+  var rawInvSub = g(/Subtotal[:\s\t]+\$?\s*([\d,]+\.\d{2})/i);
+  var subtotal = calcSub>0 ? fmt(calcSub) : (rawInvSub?'$'+rawInvSub:null);
+  if(!tax&&subtotal){
     var calcTotal=parseDollar(total);
-    if(calcTotal>calcSub) tax=fmt(calcTotal-calcSub);
+    var calcSubAmt=parseDollar(subtotal);
+    if(calcTotal>calcSubAmt) tax=fmt(calcTotal-calcSubAmt);
   }
 
   D={_id:invoice_number||makeId('inv'),customer_name:customer_name,invoice_number:invoice_number,invoice_date:invoice_date,phone:phone,address:address,delivery_date:delivery_date,delivery_window:delivery_window,notes:notes,total:total,subtotal:subtotal,tax:tax,balance_due:autoCodAmt,line_items:items,cod:autoCod};
@@ -575,7 +578,7 @@ function renderParsed(d){
   document.getElementById('fdate').textContent=sf(d.delivery_date);
   document.getElementById('fday').textContent=sf(d.delivery_window);
   document.getElementById('fnotes').textContent=sf(d.notes);
-  document.getElementById('ftotal').textContent=sf(d.subtotal);
+  document.getElementById('ftotal').textContent=d.subtotal&&d.subtotal!='$0.00'?d.subtotal:(d.total||'—');
   document.getElementById('finvtotal').textContent=sf(d.total);
   document.getElementById('fcod').value=d.cod||'no';
   // Show balance amount next to CoD selector
@@ -754,32 +757,6 @@ window.selectDay = function(day,el){
   renderDeliveries();
 };
 
-function buildRouteLinks(filtered){
-  // Build Google Maps URL directly from addresses — no geocoding API needed
-  var ORIGIN='2323+E+Main+St+Ventura+CA+93003';
-  var CHUNK=8;
-  var loads=[];
-  for(var i=0;i<filtered.length;i+=CHUNK) loads.push(filtered.slice(i,i+CHUNK));
-  loads.forEach(function(load,li){
-    // Google Maps dir format: /maps/dir/origin/stop1/stop2/.../dest
-    var parts=[ORIGIN];
-    load.forEach(function(d){
-      var addr=(d.address||d.customer_name||'Ventura CA').trim();
-      parts.push(encodeURIComponent(addr));
-    });
-    parts.push(ORIGIN); // return to store
-    var url='https://www.google.com/maps/dir/'+parts.join('/');
-    var btn=document.getElementById('route-btn-'+li);
-    if(btn){
-      btn.href=url;
-      btn.style.opacity='1';
-      btn.style.pointerEvents='auto';
-      btn.textContent='Open Route'+(loads.length>1?' (Load '+(li+1)+')':'');
-    }
-  });
-  renderDeliveryCards(filtered);
-}
-
 
 function renderDeliveryCards(filtered){
   var CHUNK=8;
@@ -833,24 +810,41 @@ function renderDeliveries(){
 
   var CHUNK=8;
   var numLoads=Math.ceil(filtered.length/CHUNK);
+  var ORIGIN='2323+E+Main+St+Ventura+CA+93003';
 
-  // Build route buttons in toolbar
+  // Build route URLs first
+  var loads=[];
+  for(var i=0;i<filtered.length;i+=CHUNK) loads.push(filtered.slice(i,i+CHUNK));
+  var routeUrls=loads.map(function(load){
+    var parts=[ORIGIN];
+    load.forEach(function(d){ parts.push(encodeURIComponent((d.address||d.customer_name||'Ventura CA').trim())); });
+    parts.push(ORIGIN);
+    return 'https://www.google.com/maps/dir/'+parts.join('/');
+  });
+
+  // Inject route buttons into toolbar with URLs already set
   var toolbar=document.getElementById('delivery-toolbar');
   if(toolbar){
-    var old=toolbar.querySelector('.route-btns');
-    if(old) old.remove();
+    var oldBtns=toolbar.querySelector('.route-btns');
+    if(oldBtns) oldBtns.remove();
     var wrap=document.createElement('div');
     wrap.className='route-btns';
     wrap.style.cssText='display:flex;gap:6px;flex-wrap:wrap;';
-    for(var li=0;li<numLoads;li++){
-      wrap.innerHTML+='<a id="route-btn-'+li+'" href="#" target="_blank" class="btn btn-blue btn-sm no-print" style="opacity:.5;pointer-events:none;text-decoration:none;">'
-        +(numLoads>1?'Open Route (Load '+(li+1)+')':'Open Route')+'</a>';
-    }
+    routeUrls.forEach(function(url,li){
+      var a=document.createElement('a');
+      a.href=url;
+      a.target='_blank';
+      a.className='btn btn-blue btn-sm no-print';
+      a.style.textDecoration='none';
+      a.textContent=numLoads>1?'Open Route (Load '+(li+1)+')':'Open Route';
+      wrap.appendChild(a);
+    });
     toolbar.insertBefore(wrap,toolbar.firstChild);
   }
 
-  buildRouteLinks(filtered);
-}indow.removeDelivery = async function(id){ await fbDel('deliveries',id); };
+  renderDeliveryCards(filtered);
+}
+window.removeDelivery = async function(id){ await fbDel('deliveries',id); };
 
 window.clearDeliveryDay = async function(){
   if(!confirm('Clear all deliveries for '+currentDay+'?')) return;
@@ -963,11 +957,24 @@ window.removeMonth = async function(id){ await fbDel('monthly',id); };
 
 // ── PRINT ─────────────────────────────────────────────────────────────────────
 window.printPage = function(section){
-  var pg=document.getElementById('pg-'+section);
-  if(!pg) return;
-  pg.setAttribute('data-printing','1');
-  window.print();
-  pg.removeAttribute('data-printing');
+  var target=document.getElementById('pg-'+section);
+  if(!target) return;
+  // Hide all pages, show only target
+  var pages=document.querySelectorAll('.page');
+  var wasOn=[];
+  pages.forEach(function(p){
+    if(p.classList.contains('on')){ wasOn.push(p); }
+    p.classList.remove('on');
+  });
+  target.classList.add('on');
+  target.setAttribute('data-printing','1');
+  setTimeout(function(){
+    window.print();
+    // Restore
+    target.classList.remove('on');
+    target.removeAttribute('data-printing');
+    wasOn.forEach(function(p){ p.classList.add('on'); });
+  }, 100);
 };
 
 // ── CLEAR SECTION ─────────────────────────────────────────────────────────────
