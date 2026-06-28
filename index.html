@@ -662,6 +662,7 @@ window.saveAll = async function(){
   }
   // Re-fetch everything from Firestore so all tabs update immediately
   await fetchAll();
+  saveCache();
   setSyncStatus('ok','Saved ✓');
   alert('"'+(D.customer_name||'Invoice')+'" saved to all queues!');
 };
@@ -753,60 +754,32 @@ window.selectDay = function(day,el){
   renderDeliveries();
 };
 
-function optimizeRoute(stops){
-  var origin={lat:34.2805,lng:-119.2945};
-  var remaining=stops.slice();
-  var sorted=[];
-  var cur=origin;
-  while(remaining.length){
-    var best=0,bestDist=Infinity;
-    for(var i=0;i<remaining.length;i++){
-      var c=remaining[i]._coords||origin;
-      var dist=Math.pow(c.lat-cur.lat,2)+Math.pow(c.lng-cur.lng,2);
-      if(dist<bestDist){bestDist=dist;best=i;}
-    }
-    sorted.push(remaining.splice(best,1)[0]);
-    cur=sorted[sorted.length-1]._coords||origin;
-  }
-  return sorted;
-}
-
-function geocodeAndRoute(filtered){
-  if(!filtered.length) return;
-  var pending=filtered.length;
-  var stops=filtered.map(function(d){return Object.assign({},d,{_coords:null});});
-  stops.forEach(function(stop){
-    var addr=stop.address||'';
-    if(!addr){pending--;if(pending<=0)buildRouteLinks(optimizeRoute(stops));return;}
-    fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q='+encodeURIComponent(addr),{headers:{'Accept-Language':'en'}})
-      .then(function(r){return r.json();})
-      .then(function(data){
-        if(data&&data[0]){stop._coords={lat:parseFloat(data[0].lat),lng:parseFloat(data[0].lon)};}
-        pending--;
-        if(pending<=0) buildRouteLinks(optimizeRoute(stops));
-      }).catch(function(){pending--;if(pending<=0)buildRouteLinks(optimizeRoute(stops));});
-  });
-}
-
-function buildRouteLinks(sorted){
+function buildRouteLinks(filtered){
+  // Build Google Maps URL directly from addresses — no geocoding API needed
   var ORIGIN='2323+E+Main+St+Ventura+CA+93003';
   var CHUNK=8;
   var loads=[];
-  for(var i=0;i<sorted.length;i+=CHUNK) loads.push(sorted.slice(i,i+CHUNK));
+  for(var i=0;i<filtered.length;i+=CHUNK) loads.push(filtered.slice(i,i+CHUNK));
   loads.forEach(function(load,li){
-    var addrs=load.map(function(d){return encodeURIComponent((d.address||d.customer_name||'Ventura CA').replace(/\s+/g,'+'));});
-    var dest=addrs.pop()||ORIGIN;
-    var mid=addrs.length?addrs.join('/')+'/'  :'';
-    var url='https://www.google.com/maps/dir/'+ORIGIN+'/'+mid+dest;
+    // Google Maps dir format: /maps/dir/origin/stop1/stop2/.../dest
+    var parts=[ORIGIN];
+    load.forEach(function(d){
+      var addr=(d.address||d.customer_name||'Ventura CA').trim();
+      parts.push(encodeURIComponent(addr));
+    });
+    parts.push(ORIGIN); // return to store
+    var url='https://www.google.com/maps/dir/'+parts.join('/');
     var btn=document.getElementById('route-btn-'+li);
     if(btn){
       btn.href=url;
       btn.style.opacity='1';
+      btn.style.pointerEvents='auto';
       btn.textContent='Open Route'+(loads.length>1?' (Load '+(li+1)+')':'');
     }
   });
-  renderDeliveryCards(sorted);
+  renderDeliveryCards(filtered);
 }
+
 
 function renderDeliveryCards(filtered){
   var CHUNK=8;
@@ -871,13 +844,12 @@ function renderDeliveries(){
     wrap.style.cssText='display:flex;gap:6px;flex-wrap:wrap;';
     for(var li=0;li<numLoads;li++){
       wrap.innerHTML+='<a id="route-btn-'+li+'" href="#" target="_blank" class="btn btn-blue btn-sm no-print" style="opacity:.5;pointer-events:none;text-decoration:none;">'
-        +(numLoads>1?'Building Route '+(li+1)+'…':'Building Route…')+'</a>';
+        +(numLoads>1?'Open Route (Load '+(li+1)+')':'Open Route')+'</a>';
     }
     toolbar.insertBefore(wrap,toolbar.firstChild);
   }
 
-  renderDeliveryCards(filtered);
-  geocodeAndRoute(filtered);
+  buildRouteLinks(filtered);
 }indow.removeDelivery = async function(id){ await fbDel('deliveries',id); };
 
 window.clearDeliveryDay = async function(){
@@ -1064,7 +1036,29 @@ function mname(m){return['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep
 function showErr(msg){var e=document.getElementById('err');e.textContent='⚠️ '+msg;e.style.display='block';}
 function clearErr(){var e=document.getElementById('err');if(e)e.style.display='none';}
 
+// ── LOCALSTORAGE CACHE — load instantly on open, Firebase updates async ──
+function saveCache(){ try{ localStorage.setItem('mmf_db', JSON.stringify(DB)); }catch(e){} }
+function loadCache(){
+  try{
+    var cached = localStorage.getItem('mmf_db');
+    if(cached){
+      var parsed = JSON.parse(cached);
+      COLS.forEach(function(c){ if(parsed[c]) DB[c]=parsed[c]; });
+      renderAll();
+      console.log('[cache] loaded from localStorage');
+    }
+  }catch(e){}
+}
+
+// Wrap fetchAll to also save cache after loading
+var _origFetchAll = fetchAll;
+fetchAll = async function(){
+  await _origFetchAll();
+  saveCache();
+};
+
 // ── BOOT ──────────────────────────────────────────────────────────────────────
+loadCache(); // show data instantly from cache
 document.getElementById('loader').style.display='flex';
 startListeners();
 
