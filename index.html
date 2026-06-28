@@ -305,9 +305,10 @@ select.inline{border:1px solid var(--bor2);border-radius:6px;padding:3px 6px;fon
 <div class="page" id="pg-checkin">
   <div class="card-hd no-print" style="margin-bottom:1rem;">
     <span style="font-size:13px;color:var(--txm)">Grouped by distributor — check off items as they arrive</span>
-    <div style="display:flex;gap:8px;">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
       <button class="btn btn-sm no-print" onclick="printPage('checkin')">Print</button>
-      <button class="btn btn-sm btn-red no-print" onclick="clearCheckins()">Clear Checks</button>
+      <button class="btn btn-sm btn-red no-print" onclick="clearPastCheckins()">Clear Past &amp; Done</button>
+      <button class="btn btn-sm btn-red no-print" onclick="clearCheckins()">Clear All Checks</button>
     </div>
   </div>
   <div id="checkin-content"></div>
@@ -463,7 +464,7 @@ function go(){
     var dm=cm[1].match(/\b(\d{1,2}[\\/\-]\d{1,2})\b/);if(dm)dm[1]=dm[1].replace(/-/g,'/');
     var dw=cm[1].match(/\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/i);
     if(dm)delivery_date=dm[1]+'/'+new Date().getFullYear();
-    if(dw)delivery_window=dw[1];
+    if(dw)delivery_window=dw[1].charAt(0).toUpperCase()+dw[1].slice(1).toLowerCase();
   }
   if(!delivery_date){
     var ci=-1;for(var i=0;i<lines.length;i++){if(/^Comments:?$/i.test(lines[i])){ci=i;break;}}
@@ -472,7 +473,7 @@ function go(){
       var dm2=cb.match(/\b(\d{1,2}[\\/\-]\d{1,2})\b/);if(dm2)dm2[1]=dm2[1].replace(/-/g,'/');
       var dw2=cb.match(/\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/i);
       if(dm2&&!delivery_date)delivery_date=dm2[1]+'/'+new Date().getFullYear();
-      if(dw2&&!delivery_window)delivery_window=dw2[1];
+      if(dw2&&!delivery_window)delivery_window=dw2[1].charAt(0).toUpperCase()+dw2[1].slice(1).toLowerCase();
     }
   }
   var notes=null;
@@ -636,12 +637,30 @@ function selectDay(day,el){
   renderDeliveries();
 };
 
+function extractZip(addr){
+  if(!addr)return'99999';
+  var m=(addr||'').match(/(\d{5})/);return m?m[1]:'99999';
+}
+function extractStreetNum(addr){
+  if(!addr)return 99999;
+  var m=(addr||'').match(/^(\d+)/);return m?parseInt(m[1]):99999;
+}
+function nearestNeighborSort(stops){
+  // Sort by zip code first, then by street number within same zip
+  // This clusters deliveries by neighborhood without needing geocoding
+  return stops.slice().sort(function(a,b){
+    var za=extractZip(a.address),zb=extractZip(b.address);
+    if(za!==zb)return za.localeCompare(zb);
+    return extractStreetNum(a.address)-extractStreetNum(b.address);
+  });
+}
+
 function renderDeliveries(){
   var rows=DB.deliveries;
   var dayCounts={All:rows.length};
-  DAYS.forEach(function(d){dayCounts[d]=rows.filter(function(r){return r.delivery_window===d;}).length;});
+  DAYS.forEach(function(d){dayCounts[d]=rows.filter(function(r){return (r.delivery_window||'').toLowerCase()===d.toLowerCase();}).length;});
   Object.keys(dayCounts).forEach(function(d){var el=document.getElementById('cnt-'+d);if(el)el.textContent=dayCounts[d];});
-  var filtered=currentDay==='All'?rows:rows.filter(function(r){return r.delivery_window===currentDay;});
+  var filtered=currentDay==='All'?rows:rows.filter(function(r){return (r.delivery_window||'').toLowerCase()===currentDay.toLowerCase();});
   var container=document.getElementById('delivery-cards');
   if(!filtered.length){container.innerHTML='<div class="empty">No deliveries for this day</div>';return;}
 
@@ -674,21 +693,13 @@ function renderDeliveries(){
         var numDayLoads=Math.ceil(dayStops.length/CHUNK);
         for(var li=0;li<numDayLoads;li++){
           var load=dayStops.slice(li*CHUNK,(li+1)*CHUNK);
-          // Use Google Maps URL with optimize:true so Maps finds the best order
-          var storeAddr='2323 E Main St, Ventura, CA 93003';
-          if(load.length===1){
-            // Single stop — simple directions
-            var addr=(load[0].address||load[0].customer_name||'Ventura CA').trim();
-            var url='https://www.google.com/maps/dir/'+encodeURIComponent(storeAddr)+'/'+encodeURIComponent(addr)+'/'+encodeURIComponent(storeAddr);
-          } else {
-            // Multiple stops — use waypoints with optimize:true
-            var waypoints=load.map(function(d){return encodeURIComponent((d.address||d.customer_name||'Ventura CA').trim());}).join('|');
-            var url='https://www.google.com/maps/dir/?api=1'
-              +'&origin='+encodeURIComponent(storeAddr)
-              +'&destination='+encodeURIComponent(storeAddr)
-              +'&waypoints=optimize:true|'+waypoints
-              +'&travelmode=driving';
-          }
+          // Sort stops using nearest-neighbor by zip code (clusters nearby addresses)
+          var sorted=nearestNeighborSort(load);
+          var STORE='2323 E Main St Ventura CA 93003';
+          var parts=[STORE];
+          sorted.forEach(function(d){parts.push((d.address||d.customer_name||'Ventura CA').trim());});
+          parts.push(STORE);
+          var url='https://www.google.com/maps/dir/'+parts.map(function(p){return encodeURIComponent(p);}).join('/');
           var a=document.createElement('a');
           a.href=url;a.target='_blank';a.className='btn btn-blue btn-sm no-print';
           a.style.textDecoration='none';
@@ -715,7 +726,11 @@ function renderDeliveries(){
       lastDate=dateKey;
     }
     var inv3=d.invoice_number?d.invoice_number.slice(-3):'—';
-    var items=(d.line_items||[]).map(function(it){return it.name+(it.size?' '+it.size:'');}).join(', ');
+    var items=(d.line_items||[]).map(function(it){
+      var pill='<span style="display:inline-flex;align-items:center;background:var(--sur2);border:1px solid var(--bor2);border-radius:4px;padding:2px 8px;margin:2px 3px 2px 0;font-size:12px;white-space:nowrap;">'
+        +it.name+(it.size?' &nbsp;<strong>'+it.size+'</strong>':'')+'</span>';
+      return pill;
+    }).join('');
     var codVal=d.cod||'no';
     var codBadge=codVal!=='no'?'<span class="tag-cod" style="margin-left:6px">CoD: '+codVal+(d.balance_due?' — '+d.balance_due:'')+'</span>':'';
     var stopNum='<div style="width:26px;height:26px;border-radius:50%;background:#1a1917;color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;">'+(idx+1)+'</div>';
@@ -731,7 +746,7 @@ function renderDeliveries(){
       +'<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--bor);display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px;">'
         +'<div><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--txl);margin-bottom:3px;">Address</div>'+sf(d.address)+'</div>'
         +'<div><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--txl);margin-bottom:3px;">Phone</div>'+sf(d.phone)+'</div>'
-        +'<div style="grid-column:1/-1"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--txl);margin-bottom:3px;">Items</div>'+items+'</div>'
+        +'<div style="grid-column:1/-1"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--txl);margin-bottom:3px;">Items</div><div style="display:flex;flex-wrap:wrap;">'+items+'</div></div>'
       +'</div></div>';
   });
   container.innerHTML=html;
