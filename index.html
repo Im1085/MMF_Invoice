@@ -98,6 +98,11 @@ select.inline{border:1px solid var(--bor2);border-radius:6px;padding:3px 6px;fon
 .empty{text-align:center;padding:2rem;color:var(--txl);font-size:13px;}
 .tag-cod{background:var(--purb);color:var(--purt);border-radius:4px;padding:1px 6px;font-size:11px;font-weight:600;}
 .loading-overlay{position:fixed;inset:0;background:rgba(255,255,255,.8);display:flex;align-items:center;justify-content:center;z-index:999;font-size:14px;color:var(--txm);display:none;}
+.checkin-row{display:flex;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid var(--bor);font-size:13px;}
+.checkin-row:last-child{border-bottom:none;}
+.checkin-row input[type=checkbox]{width:18px;height:18px;cursor:pointer;accent-color:var(--grn);flex-shrink:0;}
+.checkin-row.checked span{text-decoration:line-through;color:var(--txl);}
+.checkin-dist-header{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--sur);background:#1a1917;padding:6px 12px;border-radius:6px;margin-bottom:.5rem;display:inline-block;}
 @media print{
   .nav,.parse-section,.btn,.dtabs,.card-hd .btn,select.inline,.no-print,.sync-status,.loading-overlay{display:none!important;}
   .page{display:none!important;}
@@ -118,6 +123,7 @@ select.inline{border:1px solid var(--bor2);border-radius:6px;padding:3px 6px;fon
   <div class="ntab" onclick="nav('delivery',this)">Deliveries</div>
   <div class="ntab" onclick="nav('totals',this)">Totals</div>
   <div class="ntab" onclick="nav('monthly',this)">Monthly</div>
+  <div class="ntab" onclick="nav('checkin',this)">Check-In</div>
   <div class="sync-status" id="sync-status" style="cursor:pointer" onclick="fetchAll()" title="Click to refresh">
     <div class="sync-dot" id="sync-dot"></div>
     <span id="sync-txt" style="color:#aaa;font-size:11px">Connecting…</span>
@@ -254,9 +260,10 @@ select.inline{border:1px solid var(--bor2);border-radius:6px;padding:3px 6px;fon
       <div class="dtab" onclick="selectDay('Friday',this)">Fri <span class="cnt" id="cnt-Friday">0</span></div>
       <div class="dtab" onclick="selectDay('Saturday',this)">Sat <span class="cnt" id="cnt-Saturday">0</span></div>
     </div>
-    <div style="display:flex;gap:8px;">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
       <button class="btn btn-sm no-print" onclick="printPage('delivery')">Print</button>
       <button class="btn btn-sm btn-red no-print" onclick="clearDeliveryDay()">Clear Day</button>
+      <button class="btn btn-sm btn-red no-print" onclick="clearPastDeliveries()">Clear Past</button>
       <button class="btn btn-sm btn-red no-print" onclick="clearSection('deliveries')">Clear All</button>
     </div>
   </div>
@@ -309,6 +316,20 @@ select.inline{border:1px solid var(--bor2);border-radius:6px;padding:3px 6px;fon
   </div>
 </div>
 
+<!-- CHECK-IN -->
+<div class="page" id="pg-checkin">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;flex-wrap:wrap;gap:8px;" class="no-print">
+    <div>
+      <span style="font-size:13px;color:var(--txm)">Divided by distributor — check off items as they arrive</span>
+    </div>
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-sm no-print" onclick="printPage('checkin')">Print</button>
+      <button class="btn btn-sm btn-red no-print" onclick="clearCheckins()">Clear Checks</button>
+    </div>
+  </div>
+  <div id="checkin-content"></div>
+</div>
+
 <!-- Firebase SDKs -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
@@ -331,6 +352,7 @@ var db = firebase.firestore();
 const DIST = ['Stock','Spring Air','BIA','Serta','Spinal Care','Beautyrest','Simmons','Springpedic','V-Floor','VTA Floor','Misc'];
 const DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 const COLS = ['toorder','ordered','deliveries','totals','monthly'];
+const CHECKIN_KEY = 'mmf_checkins'; // localStorage only — ephemeral per device
 
 // ── IN-MEMORY STATE ──────────────────────────────────────────────────────────
 var DB = { toorder:[], ordered:[], deliveries:[], totals:[], monthly:[] };
@@ -677,8 +699,72 @@ function renderAll(){
   renderDeliveries();
   renderTotals();
   renderMonthly();
+  renderCheckin();
 }
 window.renderAll = renderAll;
+
+// ── CHECK-IN ─────────────────────────────────────────────────────────────────
+function getCheckins(){ try{return JSON.parse(localStorage.getItem(CHECKIN_KEY)||'{}');}catch(e){return{};} }
+function saveCheckins(obj){ try{localStorage.setItem(CHECKIN_KEY,JSON.stringify(obj));}catch(e){} }
+
+window.toggleCheckin = function(id){
+  var checks=getCheckins();
+  checks[id]=!checks[id];
+  saveCheckins(checks);
+  var row=document.getElementById('ci-'+id);
+  if(row){ row.classList.toggle('checked',!!checks[id]); row.querySelector('input').checked=!!checks[id]; }
+};
+
+window.clearCheckins = function(){
+  if(!confirm('Clear all check marks?')) return;
+  saveCheckins({});
+  renderCheckin();
+};
+
+function renderCheckin(){
+  var container=document.getElementById('checkin-content');
+  if(!container) return;
+  // Pull from toorder + ordered
+  var allItems=DB.toorder.concat(DB.ordered);
+  if(!allItems.length){ container.innerHTML='<div class="empty">No items yet — save some invoices first.</div>'; return; }
+  var checks=getCheckins();
+  // Group by distributor
+  var byDist={};
+  allItems.forEach(function(it){
+    var dist=it.distributor||'Unknown';
+    if(!byDist[dist]) byDist[dist]=[];
+    byDist[dist].push(it);
+  });
+  var distOrder=DIST.concat(['Unknown']).filter(function(d){return byDist[d]&&byDist[d].length;});
+  var html='';
+  distOrder.forEach(function(dist){
+    var items=byDist[dist];
+    // Sort by delivery date
+    items=items.slice().sort(function(a,b){
+      var da=parseDeliveryDate(a.delivery_date),db2=parseDeliveryDate(b.delivery_date);
+      if(!da&&!db2)return 0;if(!da)return 1;if(!db2)return -1;return da-db2;
+    });
+    html+='<div class="card print-section" style="margin-bottom:1rem;">'
+      +'<div style="margin-bottom:.75rem"><span class="checkin-dist-header">'+dist+'</span></div>';
+    items.forEach(function(it){
+      var id=it._id||'';
+      var checked=!!checks[id];
+      var lastName=(it.customer_name||'').split(' ').filter(Boolean).pop()||'—';
+      var inv3=(it.invoice_number||'').slice(-3)||'—';
+      var delDate=sf(it.delivery_date);
+      var delDay=sf(it.delivery_window);
+      html+='<div class="checkin-row'+(checked?' checked':'')+'" id="ci-'+id+'">'
+        +'<input type="checkbox"'+(checked?' checked':'')+' onchange="toggleCheckin(''+id+'')">'
+        +'<span style="width:110px;font-weight:600">'+lastName+'</span>'
+        +'<span style="width:50px;color:var(--txm)">…'+inv3+'</span>'
+        +'<span style="flex:1">'+delDate+(delDay&&delDay!=='—'?' ('+delDay+')':'')+'</span>'
+        +'<span style="font-size:12px;color:var(--txm)">'+sf(it.name)+(it.size?' '+it.size:'')+'</span>'
+        +'</div>';
+    });
+    html+='</div>';
+  });
+  container.innerHTML=html;
+}
 
 // ── TO ORDER ─────────────────────────────────────────────────────────────────
 function renderToOrder(){
@@ -747,6 +833,7 @@ window.updateItemDist = async function(section, id, val){
 
 window.removeItem = async function(section, id){
   await fbDel(section,id);
+  await fetchAll();
 };
 
 // ── DELIVERIES ────────────────────────────────────────────────────────────────
@@ -758,8 +845,23 @@ window.selectDay = function(day,el){
 };
 
 
+function parseDeliveryDate(str){
+  if(!str) return null;
+  var p=str.split('/');
+  if(p.length<2) return null;
+  var yr=p.length>=3?parseInt(p[2]):new Date().getFullYear();
+  if(yr<100) yr+=2000;
+  return new Date(yr,parseInt(p[0])-1,parseInt(p[1]));
+}
+
 function renderDeliveryCards(filtered){
   var CHUNK=8;
+  // Sort by delivery date ascending
+  filtered=filtered.slice().sort(function(a,b){
+    var da=parseDeliveryDate(a.delivery_date),db=parseDeliveryDate(b.delivery_date);
+    if(!da&&!db) return 0; if(!da) return 1; if(!db) return -1;
+    return da-db;
+  });
   var numLoads=Math.ceil(filtered.length/CHUNK);
   var container=document.getElementById('delivery-cards');
   var html='';
@@ -768,10 +870,17 @@ function renderDeliveryCards(filtered){
       +'<strong>'+filtered.length+' deliveries</strong> — split into '+numLoads+' loads of up to 8. Use a separate route for each load. The truck should reload between loads.'
       +'</div>';
   }
+  var lastDateHeader='';
   filtered.forEach(function(d,idx){
     var loadNum=Math.floor(idx/CHUNK);
     if(idx%CHUNK===0&&numLoads>1){
       html+='<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--txm);margin:1rem 0 .5rem;padding-left:4px;">── Load '+(loadNum+1)+'</div>';
+    }
+    // Date group header — separate same-day different weeks
+    var dateHeader=sf(d.delivery_date)+(d.delivery_window?' — '+d.delivery_window:'');
+    if(dateHeader!==lastDateHeader){
+      html+='<div style="font-size:12px;font-weight:700;color:#fff;background:var(--acc);display:inline-block;padding:3px 10px;border-radius:4px;margin-bottom:6px;margin-top:'+(idx>0?'1rem':'0')+';">'+dateHeader+'</div>';
+      lastDateHeader=dateHeader;
     }
     var inv3=d.invoice_number?d.invoice_number.slice(-3):'—';
     var items=(d.line_items||[]).map(function(it){return it.name+(it.size?' '+it.size:'');}).join(', ');
@@ -844,12 +953,32 @@ function renderDeliveries(){
 
   renderDeliveryCards(filtered);
 }
-window.removeDelivery = async function(id){ await fbDel('deliveries',id); };
+window.removeDelivery = async function(id){ await fbDel('deliveries',id); await fetchAll(); };
 
 window.clearDeliveryDay = async function(){
   if(!confirm('Clear all deliveries for '+currentDay+'?')) return;
-  var toDelete=currentDay==='All'?DB.deliveries:DB.deliveries.filter(function(r){return r.delivery_window===currentDay;});
+  var toDelete=(currentDay==='All'?DB.deliveries:DB.deliveries.filter(function(r){return r.delivery_window===currentDay;})).slice();
+  setSyncStatus('loading','Clearing…');
   for(var i=0;i<toDelete.length;i++) await fbDel('deliveries',toDelete[i]._id);
+  await fetchAll();
+  setSyncStatus('ok','Cleared');
+};
+
+window.clearPastDeliveries = async function(){
+  var today=new Date(); today.setHours(0,0,0,0);
+  var old=DB.deliveries.filter(function(r){
+    if(!r.delivery_date) return false;
+    var parts=r.delivery_date.split('/');
+    if(parts.length<2) return false;
+    var d=new Date(parseInt(parts[2]||new Date().getFullYear()),parseInt(parts[0])-1,parseInt(parts[1]));
+    return d<today;
+  });
+  if(!old.length){alert('No past deliveries to clear.');return;}
+  if(!confirm('Clear '+old.length+' deliveries before today ('+today.toLocaleDateString()+')?')) return;
+  setSyncStatus('loading','Clearing…');
+  for(var i=0;i<old.length;i++) await fbDel('deliveries',old[i]._id);
+  await fetchAll();
+  setSyncStatus('ok','Cleared');
 };
 
 // ── TOTALS ────────────────────────────────────────────────────────────────────
@@ -913,7 +1042,7 @@ function renderTotals(){
   });
 }
 
-window.removeTotalRow = async function(id){ await fbDel('totals',id); };
+window.removeTotalRow = async function(id){ await fbDel('totals',id); await fetchAll(); };
 
 // ── MONTHLY ───────────────────────────────────────────────────────────────────
 window.saveMonth = async function(){
@@ -953,7 +1082,7 @@ function renderMonthly(){
     :'<div class="empty">No months saved yet. Go to Totals → select a month → Save Month.</div>';
 }
 
-window.removeMonth = async function(id){ await fbDel('monthly',id); };
+window.removeMonth = async function(id){ await fbDel('monthly',id); await fetchAll(); };
 
 // ── PRINT ─────────────────────────────────────────────────────────────────────
 window.printPage = function(section){
@@ -981,8 +1110,11 @@ window.printPage = function(section){
 window.clearSection = async function(section){
   if(!confirm('Clear all '+section+' data?')) return;
   var colName=section==='toorder'?'toorder':section==='ordered'?'ordered':section==='deliveries'?'deliveries':section==='totals'?'totals':'monthly';
-  var rows=DB[colName];
+  var rows=DB[colName].slice();
+  setSyncStatus('loading','Clearing…');
   for(var i=0;i<rows.length;i++) await fbDel(colName,rows[i]._id);
+  await fetchAll();
+  setSyncStatus('ok','Cleared');
 };
 
 // ── MANUAL FORM ───────────────────────────────────────────────────────────────
