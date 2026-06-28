@@ -674,10 +674,21 @@ function renderDeliveries(){
         var numDayLoads=Math.ceil(dayStops.length/CHUNK);
         for(var li=0;li<numDayLoads;li++){
           var load=dayStops.slice(li*CHUNK,(li+1)*CHUNK);
-          var parts=[ORIGIN];
-          load.forEach(function(d){parts.push(encodeURIComponent((d.address||d.customer_name||'Ventura CA').trim()));});
-          parts.push(ORIGIN);
-          var url='https://www.google.com/maps/dir/'+parts.join('/');
+          // Use Google Maps URL with optimize:true so Maps finds the best order
+          var storeAddr='2323 E Main St, Ventura, CA 93003';
+          if(load.length===1){
+            // Single stop — simple directions
+            var addr=(load[0].address||load[0].customer_name||'Ventura CA').trim();
+            var url='https://www.google.com/maps/dir/'+encodeURIComponent(storeAddr)+'/'+encodeURIComponent(addr)+'/'+encodeURIComponent(storeAddr);
+          } else {
+            // Multiple stops — use waypoints with optimize:true
+            var waypoints=load.map(function(d){return encodeURIComponent((d.address||d.customer_name||'Ventura CA').trim());}).join('|');
+            var url='https://www.google.com/maps/dir/?api=1'
+              +'&origin='+encodeURIComponent(storeAddr)
+              +'&destination='+encodeURIComponent(storeAddr)
+              +'&waypoints=optimize:true|'+waypoints
+              +'&travelmode=driving';
+          }
           var a=document.createElement('a');
           a.href=url;a.target='_blank';a.className='btn btn-blue btn-sm no-print';
           a.style.textDecoration='none';
