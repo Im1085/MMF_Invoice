@@ -135,7 +135,10 @@ select.inline{border:1px solid var(--bor2);border-radius:6px;padding:3px 6px;fon
     <div class="card-hd"><h2>Invoice Parser</h2></div>
     <div class="parse-wrap">
       <textarea id="txt" placeholder="Open invoice in browser → Ctrl+A → Ctrl+C → paste here → Parse"></textarea>
-      <button class="btn btn-blue" onclick="go()">Parse</button>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <button class="btn btn-blue" onclick="go()">Parse</button>
+        <button class="btn" onclick="pasteInvoice()" title="Paste clipboard contents into the text area">Paste</button>
+      </div>
     </div>
     <p class="hint"><strong>Tip:</strong> Open the InvoiceASAP invoice → Ctrl+A → Ctrl+C → paste above → Parse.</p>
   </div>
@@ -409,15 +412,16 @@ function loadCache(){
 }
 
 // ── NAV ───────────────────────────────────────────────────────────────────────
-window.nav=function(pg,el){
+function nav(pg,el){
   document.querySelectorAll('.ntab').forEach(function(t){t.classList.remove('on');});
   document.querySelectorAll('.page').forEach(function(p){p.classList.remove('on');});
   el.classList.add('on');
   document.getElementById('pg-'+pg).classList.add('on');
-};
+}
+window.nav=nav;
 
 // ── PARSE ─────────────────────────────────────────────────────────────────────
-window.go=function(){
+function go(){
   var raw=document.getElementById('txt').value.trim();
   if(!raw){showErr('Paste invoice text first.');return;}
   clearErr();
@@ -547,11 +551,11 @@ function renderParsed(d){
     }).join('')
     :'<tr><td colspan="5" class="empty">No items</td></tr>';
 }
-window.setIS=function(i,v){if(D&&D.line_items[i])D.line_items[i].status=v;};
-window.setID=function(i,v){if(D&&D.line_items[i])D.line_items[i].distributor=v;};
+function setIS(i,v){if(D&&D.line_items[i])D.line_items[i].status=v;};
+function setID(i,v){if(D&&D.line_items[i])D.line_items[i].distributor=v;};
 
 // ── SAVE ALL ─────────────────────────────────────────────────────────────────
-window.saveAll=async function(){
+async function saveAll(){
   if(!D){alert('Nothing to save.');return;}
   D.cod=document.getElementById('fcod').value;
   setSS('loading','Saving…');
@@ -610,7 +614,7 @@ function renderOrdered(){
     }).join('')
     :'<tr><td colspan="8" class="empty">No ordered items yet</td></tr>';
 }
-window.updIS=async function(sec,id,val){
+async function updIS(sec,id,val){
   var item=DB[sec].find(function(x){return x._id===id;});if(!item)return;
   item.status=val;var isDone=val==='yes'||val==='stock';
   if(sec==='toorder'&&isDone){await fbDel('toorder',id);await fbSet('ordered',id,item);}
@@ -618,14 +622,14 @@ window.updIS=async function(sec,id,val){
   else{await fbSet(sec,id,item);}
   await fetchAll();
 };
-window.updID=async function(sec,id,val){
+async function updID(sec,id,val){
   var item=DB[sec].find(function(x){return x._id===id;});if(!item)return;
   item.distributor=val;await fbSet(sec,id,item);await fetchAll();
 };
-window.remItem=async function(sec,id){await fbDel(sec,id);await fetchAll();};
+async function remItem(sec,id){await fbDel(sec,id);await fetchAll();};
 
 // ── DELIVERIES ────────────────────────────────────────────────────────────────
-window.selectDay=function(day,el){
+function selectDay(day,el){
   currentDay=day;
   document.querySelectorAll('.dtab').forEach(function(t){t.classList.remove('on');});
   el.classList.add('on');
@@ -707,9 +711,9 @@ function renderDeliveries(){
   container.innerHTML=html;
 }
 
-window.remDel=async function(id){await fbDel('deliveries',id);await fetchAll();};
+async function remDel(id){await fbDel('deliveries',id);await fetchAll();};
 
-window.clearDeliveryDay=async function(){
+async function clearDeliveryDay(){
   if(!confirm('Clear all deliveries for '+currentDay+'?'))return;
   var rows=(currentDay==='All'?DB.deliveries:DB.deliveries.filter(function(r){return r.delivery_window===currentDay;})).slice();
   setSS('loading','Clearing…');
@@ -717,7 +721,7 @@ window.clearDeliveryDay=async function(){
   await fetchAll();
 };
 
-window.clearPastDeliveries=async function(){
+async function clearPastDeliveries(){
   var today=new Date();today.setHours(0,0,0,0);
   var old=DB.deliveries.filter(function(r){
     var d=parseDeliveryDate(r.delivery_date);return d&&d<today;
@@ -729,7 +733,7 @@ window.clearPastDeliveries=async function(){
   await fetchAll();
 };
 
-window.clearSection=async function(section){
+async function clearSection(section){
   if(!confirm('Clear all '+section+' data?'))return;
   var col=section==='toorder'?'toorder':section==='ordered'?'ordered':section==='deliveries'?'deliveries':section==='totals'?'totals':'monthly';
   var rows=DB[col].slice();
@@ -772,10 +776,10 @@ function renderTotals(){
   sel.innerHTML='<option value="">Select month…</option>';
   Object.keys(months).sort().reverse().forEach(function(k){var p=k.split('-');sel.innerHTML+='<option value="'+k+'"'+(cur===k?' selected':'')+'>'+mname(p[1])+' '+p[0]+' ('+months[k]+')</option>';});
 }
-window.remTotal=async function(id){await fbDel('totals',id);await fetchAll();};
+async function remTotal(id){await fbDel('totals',id);await fetchAll();};
 
 // ── MONTHLY ───────────────────────────────────────────────────────────────────
-window.saveMonth=async function(){
+async function saveMonth(){
   var sel=document.getElementById('month-select').value;if(!sel){alert('Select a month first.');return;}
   var rows=DB.totals.filter(function(r){if(!r.invoice_date)return false;var p=r.invoice_date.split('/');return p.length>=3&&(p[2]+'-'+p[0].padStart(2,'0'))===sel;});
   var gT=rows.reduce(function(s,r){return s+parseDollar(r.total);},0);
@@ -793,18 +797,18 @@ function renderMonthly(){
       +'</tbody></table></div><div class="total-footer"><span>Annual total</span><span>'+fmt(ann)+'</span></div>'
     :'<div class="empty">No months saved yet. Go to Totals → select a month → Save Month.</div>';
 }
-window.remMonth=async function(id){await fbDel('monthly',id);await fetchAll();};
+async function remMonth(id){await fbDel('monthly',id);await fetchAll();};
 
 // ── CHECK-IN ─────────────────────────────────────────────────────────────────
 function getCheckins(){try{return JSON.parse(localStorage.getItem(CHECKIN_KEY)||'{}');}catch(e){return{};}}
 function saveCheckins(obj){try{localStorage.setItem(CHECKIN_KEY,JSON.stringify(obj));}catch(e){}}
 
-window.toggleCheckin=function(cb){
+function toggleCheckin(cb){
   var id=cb.getAttribute('data-id')||'';
   var checks=getCheckins();checks[id]=cb.checked;saveCheckins(checks);
   var row=document.getElementById('ci-'+id);if(row)row.classList.toggle('checked',cb.checked);
 };
-window.clearCheckins=function(){if(!confirm('Clear all check marks?'))return;saveCheckins({});renderCheckin();};
+function clearCheckins(){if(!confirm('Clear all check marks?'))return;saveCheckins({});renderCheckin();};
 
 function renderCheckin(){
   var container=document.getElementById('checkin-content');if(!container)return;
@@ -844,7 +848,7 @@ function renderCheckin(){
 }
 
 // ── PRINT ─────────────────────────────────────────────────────────────────────
-window.printPage=function(section){
+function printPage(section){
   var target=document.getElementById('pg-'+section);if(!target)return;
   var pages=document.querySelectorAll('.page');
   var wasOn=[];
@@ -867,9 +871,9 @@ function prefill(d){
   document.getElementById('ma').value=d.address||'';document.getElementById('mno').value=d.notes||'';
   document.getElementById('mpr').value=(d.line_items||[]).map(function(it){return it.name+(it.size?' '+it.size:'');}).join('\n');
 }
-window.openManual=function(){document.getElementById('mform').style.display='block';};
-window.closeManual=function(){document.getElementById('mform').style.display='none';};
-window.submitManual=function(){
+function openManual(){document.getElementById('mform').style.display='block';};
+function closeManual(){document.getElementById('mform').style.display='none';};
+function submitManual(){
   var SZ=/\b(Twin\s*XL|Twin|Full|Queen|Cal\s*King|Split\s*King|Split\s*CK|Eastern\s*King|King|CK|EK)\b/i;
   var plines=(document.getElementById('mpr').value||'').split('\n').filter(Boolean);
   if(!D)D={};
@@ -883,6 +887,21 @@ window.submitManual=function(){
   if(!D.customer_name){alert('Enter a customer name.');return;}
   closeManual();renderParsed(D);document.getElementById('results').style.display='block';
 };
+
+// ── PASTE ─────────────────────────────────────────────────────────────────────
+function pasteInvoice(){
+  if(navigator.clipboard&&navigator.clipboard.readText){
+    navigator.clipboard.readText().then(function(text){
+      document.getElementById('txt').value=text;
+    }).catch(function(){
+      document.getElementById('txt').focus();
+      document.execCommand('paste');
+    });
+  } else {
+    document.getElementById('txt').focus();
+    document.execCommand('paste');
+  }
+}
 
 // ── BOOT ──────────────────────────────────────────────────────────────────────
 document.getElementById('loader').style.display='flex';
