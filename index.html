@@ -645,12 +645,32 @@ function extractStreetNum(addr){
   if(!addr)return 99999;
   var m=(addr||'').match(/^(\d+)/);return m?parseInt(m[1]):99999;
 }
+var ZIP_RANK_LIST=[
+  '93101','93103','93105','93108','93109','93110','93111','93117','93118','93120',
+  '93116','93190','93013','93014',
+  '93023','93022','93024',
+  '93001','93002','93009',
+  '93004',
+  '93015','93040',
+  '93060','93061',
+  '93030','93031','93032','93033','93034','93035','93036',
+  '93041','93043','93044',
+  '93011','93012',
+  '93021',
+  '93063','93065',
+  '91320','91360','91361','91362',
+  '91301','91302','91303',
+  '93003'
+];
+function zipRank(zip){
+  var i=ZIP_RANK_LIST.indexOf(zip);
+  return i>=0?i:500;
+}
 function nearestNeighborSort(stops){
-  // Sort by zip code first, then by street number within same zip
-  // This clusters deliveries by neighborhood without needing geocoding
   return stops.slice().sort(function(a,b){
     var za=extractZip(a.address),zb=extractZip(b.address);
-    if(za!==zb)return za.localeCompare(zb);
+    var ra=zipRank(za),rb=zipRank(zb);
+    if(ra!==rb)return ra-rb;
     return extractStreetNum(a.address)-extractStreetNum(b.address);
   });
 }
