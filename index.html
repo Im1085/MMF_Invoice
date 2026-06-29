@@ -759,17 +759,20 @@ function renderDeliveries(){
     var codVal=d.cod||'no';
     var codBadge=codVal!=='no'?'<span class="tag-cod" style="margin-left:6px">CoD: '+codVal+(d.balance_due?' — '+d.balance_due:'')+'</span>':'';
     var zip=extractZip(d.address);
-    html+='<div class="card print-section" style="margin-bottom:.5rem;">'
+    html+='<div class="card print-section" style="margin-bottom:.5rem;" id="delcard-'+d._id+'">'
       +'<div style="display:flex;justify-content:space-between;align-items:flex-start;">'
         +'<div style="display:flex;gap:10px;align-items:center;">'
           +'<div style="width:26px;height:26px;border-radius:50%;background:#1a1917;color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;">'+stopNum+'</div>'
           +'<div class="av">'+ini(d.customer_name)+'</div>'
           +'<div>'
             +'<div style="font-size:14px;font-weight:600;">'+sf(d.customer_name)+codBadge+'</div>'
-            +'<div style="font-size:12px;color:var(--txm);">Invoice …'+inv3+(zip&&zip!=='99999'?' &nbsp;·&nbsp; '+zip:'')+'</div>'
+            +'<div style="font-size:12px;color:var(--txm);">Invoice …'+inv3+(zip&&zip!=='99999'?'  ·  '+zip:'')+'  ·  '+sf(d.delivery_date)+(d.delivery_window?' ('+d.delivery_window+')':'')+'</div>'
           +'</div>'
         +'</div>'
-        +'<button class="btn btn-xs btn-red no-print" onclick="remDel(this)" data-id="'+d._id+'">✕</button>'
+        +'<div style="display:flex;gap:6px;align-items:center;" class="no-print">'
+          +'<button class="btn btn-xs" onclick="editDelCard(this)" data-id="'+d._id+'" title="Edit">✏️</button>'
+          +'<button class="btn btn-xs btn-red" onclick="remDel(this)" data-id="'+d._id+'">✕</button>'
+        +'</div>'
       +'</div>'
       +'<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--bor);display:grid;grid-template-columns:1fr 1fr;gap:8px;">'
         +'<div><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--txl);margin-bottom:3px;">Address</div><div style="font-size:13px;">'+sf(d.address)+'</div></div>'
@@ -1145,11 +1148,141 @@ function printSelectedDists(){
   setTimeout(function(){win.print();},400);
 }
 
+window.cycleSort=cycleSort;
+
+// ── DELIVERY EDIT ─────────────────────────────────────────────────────────────
+var _editDelId = null;
+
+window.editDelCard = function(btn){
+  var id = btn.getAttribute('data-id');
+  var d = DB.deliveries.find(function(x){return x._id===id;});
+  if(!d) return;
+  _editDelId = id;
+  document.getElementById('de-date').value = d.delivery_date||'';
+  document.getElementById('de-day').value = d.delivery_window||'';
+  document.getElementById('de-cod').value = d.cod||'no';
+  var origBal = parseDollar(d.original_balance||d.balance_due||0);
+  var paidSoFar = parseDollar(d.paid_amount||0);
+  var remaining = origBal - paidSoFar;
+  document.getElementById('de-balance').value = origBal>0?fmt(origBal):'';
+  document.getElementById('de-paid-prior').value = paidSoFar>0?fmt(paidSoFar):'$0.00';
+  document.getElementById('de-paid-now').value = '';
+  document.getElementById('de-remaining').value = remaining>0?fmt(remaining):(origBal>0?'$0.00':'');
+  toggleDePayment();
+  document.getElementById('del-edit-modal').style.display='flex';
+};
+
+window.toggleDePayment = function(){
+  var cod = document.getElementById('de-cod').value;
+  document.getElementById('de-payment-section').style.display = cod!=='no'?'block':'none';
+};
+
+window.calcRemaining = function(){
+  var d = DB.deliveries.find(function(x){return x._id===_editDelId;});
+  if(!d) return;
+  var origBal = parseDollar(d.original_balance||d.balance_due||0);
+  var paidPrior = parseDollar(d.paid_amount||0);
+  var paidNow = parseDollar(document.getElementById('de-paid-now').value||'0');
+  var remaining = Math.max(0, origBal - paidPrior - paidNow);
+  document.getElementById('de-remaining').value = fmt(remaining);
+};
+
+window.markFullyPaid = function(){
+  var d = DB.deliveries.find(function(x){return x._id===_editDelId;});
+  if(!d) return;
+  var origBal = parseDollar(d.original_balance||d.balance_due||0);
+  var paidPrior = parseDollar(d.paid_amount||0);
+  var paidNow = origBal - paidPrior;
+  document.getElementById('de-paid-now').value = fmt(Math.max(0,paidNow));
+  document.getElementById('de-remaining').value = '$0.00';
+};
+
+window.saveDelEdit = async function(){
+  if(!_editDelId) return;
+  var d = DB.deliveries.find(function(x){return x._id===_editDelId;});
+  if(!d) return;
+  var newDate = document.getElementById('de-date').value.trim();
+  var newDay = document.getElementById('de-day').value.trim();
+  var newCod = document.getElementById('de-cod').value;
+  var paidNow = parseDollar(document.getElementById('de-paid-now').value||'0');
+  // Preserve original balance for partial payment tracking
+  if(!d.original_balance && d.balance_due) d.original_balance = d.balance_due;
+  var origBal = parseDollar(d.original_balance||d.balance_due||0);
+  var paidPrior = parseDollar(d.paid_amount||0);
+  var totalPaid = paidPrior + paidNow;
+  var remaining = Math.max(0, origBal - totalPaid);
+  if(newDate) d.delivery_date = newDate;
+  if(newDay) d.delivery_window = newDay.charAt(0).toUpperCase()+newDay.slice(1).toLowerCase();
+  d.cod = remaining<=0?'no':newCod;
+  d.balance_due = remaining>0?fmt(remaining):null;
+  d.original_balance = origBal>0?fmt(origBal):null;
+  d.paid_amount = totalPaid>0?fmt(totalPaid):null;
+  setSS('loading','Saving…');
+  function clean(obj){
+    var out={};
+    Object.keys(obj).forEach(function(k){
+      if(k==='_coords')return;
+      var v=obj[k];
+      if(v===undefined||typeof v==='function')return;
+      out[k]=Array.isArray(v)?v.map(function(x){return(x&&typeof x==='object')?clean(x):(x===undefined?null:x);}):v===undefined?null:v;
+    });
+    return out;
+  }
+  await fbSet('deliveries', _editDelId, clean(d));
+  await fetchAll();
+  setSS('ok','Saved');
+  closeDelEdit();
+};
+
+window.closeDelEdit = function(){
+  document.getElementById('del-edit-modal').style.display='none';
+  _editDelId=null;
+};
 // ── BOOT ──────────────────────────────────────────────────────────────────────
 document.getElementById('loader').style.display='flex';
 loadCache();
 startListeners();
 </script>
+<!-- Delivery Edit Modal -->
+<div id="del-edit-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;align-items:center;justify-content:center;">
+  <div style="background:#fff;border-radius:12px;padding:1.5rem;max-width:440px;width:92%;max-height:90vh;overflow-y:auto;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.25rem;">
+      <h3 style="font-size:15px;font-weight:600;">Edit Delivery</h3>
+      <button onclick="closeDelEdit()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#888;">✕</button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:12px;">
+      <div class="fg"><label>Delivery date</label><input id="de-date" type="text" placeholder="7/2/2026"></div>
+      <div class="fg"><label>Day of week</label><input id="de-day" type="text" placeholder="Thursday"></div>
+      <div style="border-top:1px solid var(--bor);padding-top:12px;">
+        <div style="font-size:12px;font-weight:600;color:var(--txm);margin-bottom:10px;text-transform:uppercase;letter-spacing:.05em;">Payment / CoD</div>
+        <div class="fg" style="margin-bottom:10px;">
+          <label>CoD status</label>
+          <select id="de-cod" style="height:34px;border:1px solid var(--bor2);border-radius:var(--r);padding:0 10px;font-size:13px;background:var(--sur2);" onchange="toggleDePayment()">
+            <option value="no">No CoD — Paid in full</option>
+            <option value="cash">CoD — Cash</option>
+            <option value="check">CoD — Check</option>
+          </select>
+        </div>
+        <div id="de-payment-section" style="display:none;">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div class="fg"><label>Total balance due</label><input id="de-balance" type="text" placeholder="$150.00" readonly style="background:var(--sur2);color:var(--txm);"></div>
+            <div class="fg"><label>Amount paid now</label><input id="de-paid-now" type="text" placeholder="$50.00" oninput="calcRemaining()"></div>
+            <div class="fg"><label>Already paid</label><input id="de-paid-prior" type="text" placeholder="$0.00" readonly style="background:var(--sur2);color:var(--txm);"></div>
+            <div class="fg"><label>Remaining balance</label><input id="de-remaining" type="text" placeholder="$100.00" readonly style="background:var(--sur2);color:var(--txm);font-weight:600;"></div>
+          </div>
+          <div style="margin-top:8px;">
+            <button class="btn btn-grn btn-sm" onclick="markFullyPaid()" style="background:var(--grnb);color:var(--grnt);border-color:#86efac;">Mark Fully Paid</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:1.25rem;border-top:1px solid var(--bor);padding-top:1rem;">
+      <button class="btn" onclick="closeDelEdit()">Cancel</button>
+      <button class="btn btn-blue" onclick="saveDelEdit()">Save Changes</button>
+    </div>
+  </div>
+</div>
+
 <!-- Check-In Print Modal -->
 <div id="checkin-print-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;align-items:center;justify-content:center;">
   <div style="background:#fff;border-radius:12px;padding:1.5rem;max-width:420px;width:90%;max-height:80vh;overflow-y:auto;">
