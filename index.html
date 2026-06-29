@@ -399,7 +399,7 @@ async function fbDel(col,id){
   catch(e){console.error(e);return false;}
 }
 async function fetchAll(){
-  setSS('loading','Loading…');
+  setSS('loading','Syncing…');
   try{
     await Promise.all(COLS.map(function(col){
       return db.collection(col).get().then(function(snap){
@@ -425,7 +425,17 @@ function saveCache(){try{localStorage.setItem('mmf_db',JSON.stringify(DB));}catc
 function loadCache(){
   try{
     var c=localStorage.getItem('mmf_db');
-    if(c){var p=JSON.parse(c);COLS.forEach(function(col){if(p[col])DB[col]=p[col];});renderAll();}
+    if(c){
+      var p=JSON.parse(c);
+      var hasData=false;
+      COLS.forEach(function(col){if(p[col]&&p[col].length){DB[col]=p[col];hasData=true;}});
+      if(hasData){
+        // Show cached data immediately — hide the blocking loader
+        document.getElementById('loader').style.display='none';
+        renderAll();
+        setSS('loading','Syncing…');
+      }
+    }
   }catch(e){}
 }
 
@@ -1262,9 +1272,13 @@ function closeDelEdit(){
   _editDelId=null;
 };
 // ── BOOT ──────────────────────────────────────────────────────────────────────
-document.getElementById('loader').style.display='flex';
-loadCache();
-startListeners();
+// Show loader only if no cache available
+var _hasCache = (function(){
+  try{var c=localStorage.getItem('mmf_db');return !!(c&&JSON.parse(c));}catch(e){return false;}
+})();
+if(!_hasCache) document.getElementById('loader').style.display='flex';
+loadCache();     // instant — shows cached data with no delay
+startListeners(); // fetches fresh from Firebase in background
 </script>
 <!-- Delivery Edit Modal -->
 <div id="del-edit-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;align-items:center;justify-content:center;">
