@@ -1149,11 +1149,17 @@ function printSelectedDists(){
 }
 
 window.cycleSort=cycleSort;
+window.editDelCard=editDelCard;
+window.toggleDePayment=toggleDePayment;
+window.calcRemaining=calcRemaining;
+window.markFullyPaid=markFullyPaid;
+window.saveDelEdit=saveDelEdit;
+window.closeDelEdit=closeDelEdit;
 
 // ── DELIVERY EDIT ─────────────────────────────────────────────────────────────
 var _editDelId = null;
 
-window.editDelCard = function(btn){
+function editDelCard(btn){
   var id = btn.getAttribute('data-id');
   var d = DB.deliveries.find(function(x){return x._id===id;});
   if(!d) return;
@@ -1172,12 +1178,12 @@ window.editDelCard = function(btn){
   document.getElementById('del-edit-modal').style.display='flex';
 };
 
-window.toggleDePayment = function(){
+function toggleDePayment(){
   var cod = document.getElementById('de-cod').value;
   document.getElementById('de-payment-section').style.display = cod!=='no'?'block':'none';
 };
 
-window.calcRemaining = function(){
+function calcRemaining(){
   var d = DB.deliveries.find(function(x){return x._id===_editDelId;});
   if(!d) return;
   var origBal = parseDollar(d.original_balance||d.balance_due||0);
@@ -1187,7 +1193,7 @@ window.calcRemaining = function(){
   document.getElementById('de-remaining').value = fmt(remaining);
 };
 
-window.markFullyPaid = function(){
+function markFullyPaid(){
   var d = DB.deliveries.find(function(x){return x._id===_editDelId;});
   if(!d) return;
   var origBal = parseDollar(d.original_balance||d.balance_due||0);
@@ -1197,7 +1203,7 @@ window.markFullyPaid = function(){
   document.getElementById('de-remaining').value = '$0.00';
 };
 
-window.saveDelEdit = async function(){
+async function saveDelEdit(){
   if(!_editDelId) return;
   var d = DB.deliveries.find(function(x){return x._id===_editDelId;});
   if(!d) return;
@@ -1234,7 +1240,7 @@ window.saveDelEdit = async function(){
   closeDelEdit();
 };
 
-window.closeDelEdit = function(){
+function closeDelEdit(){
   document.getElementById('del-edit-modal').style.display='none';
   _editDelId=null;
 };
